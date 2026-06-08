@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/log v0.4.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/gagliardetto/solana-go v1.8.4
-	github.com/quic-go/quic-go v0.57.0
+	github.com/quic-go/quic-go v0.59.1
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.7.1
 	github.com/stretchr/testify v1.11.1
