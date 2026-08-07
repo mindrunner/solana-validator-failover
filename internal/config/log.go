@@ -7,7 +7,9 @@ import (
 )
 
 const (
-	DefaultLogLevel  = "info"
+	// DefaultLogLevel is the logging level used when no level is configured.
+	DefaultLogLevel = "info"
+	// DefaultLogFormat is the output format used when no format is configured.
 	DefaultLogFormat = "text"
 )
 
