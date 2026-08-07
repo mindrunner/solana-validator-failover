@@ -2,7 +2,6 @@ package solanavalidatorfailover
 
 import (
 	"github.com/charmbracelet/log"
-	"github.com/sol-strategies/solana-validator-failover/internal/config"
 	"github.com/sol-strategies/solana-validator-failover/internal/validator"
 	"github.com/spf13/cobra"
 )
@@ -21,12 +20,11 @@ var (
 		Short:        "run a failover - automatically detects what to do based on the node's role (active or passive)",
 		SilenceUsage: true,
 		Run: func(cmd *cobra.Command, args []string) {
-			cfg, err := config.NewFromFile(configPath)
-			if err != nil {
-				log.Fatal("failed to load config", "err", err)
+			if loadedConfig == nil {
+				log.Fatal("config was not loaded before running command")
 			}
 
-			v, err := validator.NewFromConfig(&cfg.Validator)
+			v, err := validator.NewFromConfig(&loadedConfig.Validator)
 			if err != nil {
 				log.Fatal("failed to create validator", "err", err)
 			}

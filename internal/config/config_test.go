@@ -51,6 +51,8 @@ validator:
 
 	// Verify the configuration was loaded correctly
 	assert.Equal(t, "test-validator", cfg.Validator.Bin)
+	assert.Equal(t, DefaultLogLevel, cfg.Log.Level)
+	assert.Equal(t, DefaultLogFormat, cfg.Log.Format)
 	assert.Equal(t, "testnet", cfg.Validator.Cluster)
 	assert.Equal(t, "http://localhost:8899", cfg.Validator.RPCAddress)
 	assert.Equal(t, "/tmp/ledger", cfg.Validator.LedgerDir)
@@ -133,6 +135,8 @@ validator:
 
 	// Verify defaults are set correctly
 	assert.Equal(t, DefaultBin, cfg.Validator.Bin)                                                                      // default
+	assert.Equal(t, DefaultLogLevel, cfg.Log.Level)                                                                     // default
+	assert.Equal(t, DefaultLogFormat, cfg.Log.Format)                                                                   // default
 	assert.Equal(t, DefaultCluster, cfg.Validator.Cluster)                                                              // from config
 	assert.Equal(t, DefaultFailoverServerPort, cfg.Validator.Failover.Server.Port)                                      // default
 	assert.Equal(t, DefaultFailoverServerHeartbeatInterval, cfg.Validator.Failover.Server.HeartbeatInterval)            // default
@@ -141,6 +145,59 @@ validator:
 	assert.Equal(t, DefaultFailoverMonitorCreditSamplesCount, cfg.Validator.Failover.Monitor.CreditSamples.Count)       // default
 	assert.Equal(t, DefaultFailoverMonitorCreditSamplesInterval, cfg.Validator.Failover.Monitor.CreditSamples.Interval) // default
 	assert.Equal(t, DefaultTowerFileNameTemplate, cfg.Validator.Tower.FileNameTemplate)                                 // default
+}
+
+func TestLoadFromConfigFile_WithLogConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "log-config.yaml")
+	configContent := `
+log:
+  level: debug
+  format: json
+validator:
+  cluster: testnet
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644))
+
+	cfg, err := NewFromFile(configPath)
+
+	require.NoError(t, err)
+	assert.Equal(t, "debug", cfg.Log.Level)
+	assert.Equal(t, "json", cfg.Log.Format)
+}
+
+func TestLoadFromConfigFile_InvalidLogLevel(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "invalid-log-level.yaml")
+	configContent := `
+log:
+  level: verbose
+validator:
+  cluster: testnet
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644))
+
+	_, err := NewFromFile(configPath)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "log.level must be one of debug, info, warn, error, fatal")
+}
+
+func TestLoadFromConfigFile_InvalidLogFormat(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "invalid-log-format.yaml")
+	configContent := `
+log:
+  format: xml
+validator:
+  cluster: testnet
+`
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644))
+
+	_, err := NewFromFile(configPath)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "log.format must be one of text, json, logfmt")
 }
 
 func TestLoadFromConfigFile_WithInvalidYAML(t *testing.T) {
