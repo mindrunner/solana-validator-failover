@@ -295,9 +295,14 @@ func (s *Server) handleFailoverStream(stream *quic.Stream) {
 		return
 	}
 
-	// query gossip for client by its public IP
-	s.logger.Debugf("querying gossip for active node IP %s", s.failoverStream.GetActiveNodeInfo().PublicIP)
-	gossipActiveNode, err := s.solanaRPCClient.NodeFromIP(s.failoverStream.GetActiveNodeInfo().PublicIP)
+	// Query gossip for the client by both its public IP and configured active identity.
+	activeNodeInfo := s.failoverStream.GetActiveNodeInfo()
+	expectedActivePubkey := activeNodeInfo.Identities.Active.PubKey()
+	s.logger.Debug("querying gossip for active node",
+		"public_ip", activeNodeInfo.PublicIP,
+		"pubkey", expectedActivePubkey,
+	)
+	gossipActiveNode, err := s.solanaRPCClient.NodeFromIPWithExpectedPubkey(activeNodeInfo.PublicIP, expectedActivePubkey)
 	if err != nil {
 		s.failoverStream.LogErrorWithSetMessagef("Failed to validate active node: %v", err)
 		if s.failoverStream.Encode() != nil {
@@ -306,13 +311,9 @@ func (s *Server) handleFailoverStream(stream *quic.Stream) {
 		return
 	}
 
-	// ensure the failover request comes from the active node
-	if gossipActiveNode.IP() != s.failoverStream.GetActiveNodeInfo().PublicIP {
-		s.failoverStream.LogErrorWithSetMessagef(
-			"Failed to validate active node: active node IP %s does not match expected IP %s",
-			gossipActiveNode.IP(),
-			s.failoverStream.GetActiveNodeInfo().PublicIP,
-		)
+	// Ensure the failover request comes from the configured active node.
+	if err := validateActiveGossipIdentity(gossipActiveNode.IP(), gossipActiveNode.PubKey(), activeNodeInfo.PublicIP, expectedActivePubkey); err != nil {
+		s.failoverStream.LogErrorWithSetMessagef("Failed to validate active node: %v", err)
 		if s.failoverStream.Encode() != nil {
 			return
 		}
@@ -607,6 +608,21 @@ func (s *Server) handleFailoverStream(stream *quic.Stream) {
 		}
 	}
 	s.cancel()
+}
+
+func validateActiveGossipIdentity(actualIP, actualPubkey, expectedIP, expectedPubkey string) error {
+	if actualIP != expectedIP {
+		return fmt.Errorf("active node IP %s does not match expected IP %s", actualIP, expectedIP)
+	}
+	if actualPubkey != expectedPubkey {
+		return fmt.Errorf(
+			"active node pubkey %s at IP %s does not match expected pubkey %s",
+			actualPubkey,
+			actualIP,
+			expectedPubkey,
+		)
+	}
+	return nil
 }
 
 // confirmGossipNodesPostFailover confirms that the gossip nodes have switched roles post-failover
