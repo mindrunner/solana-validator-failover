@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -261,20 +262,11 @@ func (v *Validator) configureRPCClient(localRPCURL, solanaClusterName, clusterRP
 		)
 	}
 
-	// determine the cluster RPC URL: use built-in URL for known clusters,
-	// otherwise require cluster_rpc_url from config
-	var solanaClusterRPCURL string
-	if utils.IsKnownCluster(solanaClusterName) {
-		solanaClusterRPCURL = constants.SolanaClusters[solanaClusterName].RPC
-	} else {
-		if clusterRPCURL == "" {
-			return fmt.Errorf(
-				"cluster_rpc_url is required for custom cluster %q (known clusters: %s)",
-				solanaClusterName,
-				strings.Join(constants.SolanaClusterNames, ", "),
-			)
-		}
-		solanaClusterRPCURL = clusterRPCURL
+	// An explicit cluster RPC URL overrides the built-in endpoint for known clusters.
+	// This allows operators to use a private endpoint that supports getClusterNodes.
+	solanaClusterRPCURL, err := resolveClusterRPCURL(solanaClusterName, clusterRPCURL)
+	if err != nil {
+		return err
 	}
 
 	avgSlotDuration, err := time.ParseDuration(averageSlotDuration)
@@ -284,8 +276,8 @@ func (v *Validator) configureRPCClient(localRPCURL, solanaClusterName, clusterRP
 
 	v.logger.Debug("rpc client configured",
 		"cluster", solanaClusterName,
-		"local_rpc_url", localRPCURL,
-		"cluster_rpc_url", solanaClusterRPCURL,
+		"local_rpc_url", rpcURLForLog(localRPCURL),
+		"cluster_rpc_url", rpcURLForLog(solanaClusterRPCURL),
 	)
 
 	v.RPCAddress = localRPCURL
@@ -296,6 +288,28 @@ func (v *Validator) configureRPCClient(localRPCURL, solanaClusterName, clusterRP
 	})
 
 	return nil
+}
+
+func rpcURLForLog(rawURL string) string {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return "<configured>"
+	}
+	return parsedURL.Scheme + "://" + parsedURL.Host
+}
+
+func resolveClusterRPCURL(solanaClusterName, clusterRPCURL string) (string, error) {
+	if clusterRPCURL != "" {
+		return clusterRPCURL, nil
+	}
+	if utils.IsKnownCluster(solanaClusterName) {
+		return constants.SolanaClusters[solanaClusterName].RPC, nil
+	}
+	return "", fmt.Errorf(
+		"cluster_rpc_url is required for custom cluster %q (known clusters: %s)",
+		solanaClusterName,
+		strings.Join(constants.SolanaClusterNames, ", "),
+	)
 }
 
 // configureBin ensures the validator binary exists and sets it

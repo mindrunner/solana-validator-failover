@@ -260,6 +260,33 @@ func TestConfigureRPCClient_CustomCluster_MissingClusterRPCURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "cluster_rpc_url is required")
 }
 
+func TestResolveClusterRPCURL_KnownClusterDefault(t *testing.T) {
+	url, err := resolveClusterRPCURL("mainnet-beta", "")
+
+	require.NoError(t, err)
+	assert.Equal(t, "https://api.mainnet-beta.solana.com", url)
+}
+
+func TestResolveClusterRPCURL_KnownClusterOverride(t *testing.T) {
+	url, err := resolveClusterRPCURL("mainnet-beta", "https://private-rpc.example.com")
+
+	require.NoError(t, err)
+	assert.Equal(t, "https://private-rpc.example.com", url)
+}
+
+func TestResolveClusterRPCURL_CustomCluster(t *testing.T) {
+	url, err := resolveClusterRPCURL("custom-mainnet", "https://custom-rpc.example.com")
+
+	require.NoError(t, err)
+	assert.Equal(t, "https://custom-rpc.example.com", url)
+}
+
+func TestRPCURLForLog_RedactsCredentialsAndPath(t *testing.T) {
+	loggedURL := rpcURLForLog("https://user:secret@private-rpc.example.com/v1/key?api-key=secret")
+
+	assert.Equal(t, "https://private-rpc.example.com", loggedURL)
+}
+
 // ============================================================================
 // Tests for configureBin
 // ============================================================================
