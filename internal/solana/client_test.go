@@ -204,7 +204,7 @@ func TestGossipClient_NodeFromIP_NilGossip(t *testing.T) {
 
 func TestGossipClient_NodeFromPubkey_Success(t *testing.T) {
 	// Create test client with mocks
-	client, localMock, _ := createTestClient()
+	client, localMock, networkMock := createTestClient()
 
 	// Setup mock expectations
 	expectedNodes := []*rpc.GetClusterNodesResult{
@@ -235,11 +235,12 @@ func TestGossipClient_NodeFromPubkey_Success(t *testing.T) {
 	assert.Equal(t, "1.16.0", node.Version())
 
 	localMock.AssertExpectations(t)
+	networkMock.AssertNotCalled(t, "GetClusterNodes", mock.Anything)
 }
 
 func TestGossipClient_NodeFromPubkey_NotFound(t *testing.T) {
 	// Create test client with mocks
-	client, localMock, _ := createTestClient()
+	client, localMock, networkMock := createTestClient()
 
 	// Setup mock expectations
 	expectedNodes := []*rpc.GetClusterNodesResult{
@@ -252,6 +253,7 @@ func TestGossipClient_NodeFromPubkey_NotFound(t *testing.T) {
 	}
 
 	localMock.On("GetClusterNodes", mock.Anything).Return(expectedNodes, nil)
+	networkMock.On("GetClusterNodes", mock.Anything).Return(expectedNodes, nil)
 
 	// Test the function
 	node, err := client.NodeFromPubkey("9999999999999999999999999999999999999999999999999999999999999999")
@@ -260,16 +262,20 @@ func TestGossipClient_NodeFromPubkey_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, node)
 	assert.Contains(t, err.Error(), "gossip node not found for pubkey: 9999999999999999999999999999999999999999999999999999999999999999")
+	assert.Contains(t, err.Error(), "local RPC returned 1 nodes without a match")
+	assert.Contains(t, err.Error(), "cluster RPC returned 1 nodes without a match")
 
 	localMock.AssertExpectations(t)
+	networkMock.AssertExpectations(t)
 }
 
 func TestGossipClient_NodeFromPubkey_RPCError(t *testing.T) {
 	// Create test client with mocks
-	client, localMock, _ := createTestClient()
+	client, localMock, networkMock := createTestClient()
 
 	// Setup mock expectations
 	localMock.On("GetClusterNodes", mock.Anything).Return([]*rpc.GetClusterNodesResult{}, errors.New("RPC connection failed"))
+	networkMock.On("GetClusterNodes", mock.Anything).Return([]*rpc.GetClusterNodesResult{}, errors.New("cluster RPC forbidden"))
 
 	// Test the function
 	node, err := client.NodeFromPubkey("11111111111111111111111111111111")
@@ -278,8 +284,64 @@ func TestGossipClient_NodeFromPubkey_RPCError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, node)
 	assert.Contains(t, err.Error(), "RPC connection failed")
+	assert.Contains(t, err.Error(), "cluster RPC forbidden")
 
 	localMock.AssertExpectations(t)
+	networkMock.AssertExpectations(t)
+}
+
+func TestGossipClient_NodeFromPubkey_ClusterFallback(t *testing.T) {
+	client, localMock, networkMock := createTestClient()
+	targetPubkey := createTestPublicKey(2)
+
+	localNodes := []*rpc.GetClusterNodesResult{
+		{
+			Pubkey:  createTestPublicKey(1),
+			Gossip:  stringPtr("192.168.1.100:8001"),
+			Version: stringPtr("3.0.0"),
+		},
+	}
+	clusterNodes := []*rpc.GetClusterNodesResult{
+		{
+			Pubkey:  targetPubkey,
+			Gossip:  stringPtr("79.127.227.20:8001"),
+			Version: stringPtr("1.1.3"),
+		},
+	}
+	localMock.On("GetClusterNodes", mock.Anything).Return(localNodes, nil)
+	networkMock.On("GetClusterNodes", mock.Anything).Return(clusterNodes, nil)
+
+	node, err := client.NodeFromPubkey(targetPubkey.String())
+
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	assert.Equal(t, targetPubkey.String(), node.PubKey())
+	assert.Equal(t, "79.127.227.20", node.IP())
+	assert.Equal(t, "1.1.3", node.Version())
+	localMock.AssertExpectations(t)
+	networkMock.AssertExpectations(t)
+}
+
+func TestGossipClient_NodeFromPubkey_ClusterFallbackAfterLocalRPCError(t *testing.T) {
+	client, localMock, networkMock := createTestClient()
+	targetPubkey := createTestPublicKey(2)
+	clusterNodes := []*rpc.GetClusterNodesResult{
+		{
+			Pubkey:  targetPubkey,
+			Gossip:  stringPtr("79.127.227.20:8001"),
+			Version: stringPtr("1.1.3"),
+		},
+	}
+	localMock.On("GetClusterNodes", mock.Anything).Return([]*rpc.GetClusterNodesResult{}, errors.New("local RPC unavailable"))
+	networkMock.On("GetClusterNodes", mock.Anything).Return(clusterNodes, nil)
+
+	node, err := client.NodeFromPubkey(targetPubkey.String())
+
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	assert.Equal(t, targetPubkey.String(), node.PubKey())
+	localMock.AssertExpectations(t)
+	networkMock.AssertExpectations(t)
 }
 
 func TestNodeFromIPWithExpectedPubkey_MatchFound(t *testing.T) {

@@ -142,12 +142,12 @@ func (c *Client) NodeFromPubkey(pubkey string) (*Node, error) {
 func (c *Client) getClusterNodes() ([]*rpc.GetClusterNodesResult, error) {
 	nodes, err := c.localRPCClient.GetClusterNodes(context.Background())
 	if err != nil {
-		return nil, wrapGetClusterNodesErr(err)
+		return nil, wrapLocalGetClusterNodesErr(err)
 	}
 	return nodes, nil
 }
 
-func wrapGetClusterNodesErr(err error) error {
+func wrapLocalGetClusterNodesErr(err error) error {
 	var rpcErr *jsonrpc.RPCError
 	if errors.As(err, &rpcErr) && rpcErr.Code == jsonRPCMethodNotFound {
 		return fmt.Errorf("%w; start the local validator with --full-rpc-api to enable getClusterNodes", err)
@@ -174,18 +174,55 @@ func (c *Client) nodeFromIP(ip string) (node *rpc.GetClusterNodesResult, err err
 }
 
 func (c *Client) gossipNodeFromPubkey(pubkey string) (node *rpc.GetClusterNodesResult, err error) {
-	nodes, err := c.getClusterNodes()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, node := range nodes {
-		if node.Pubkey.String() == pubkey {
+	localNodes, localErr := c.getClusterNodes()
+	if localErr == nil {
+		if node := findGossipNodeFromPubkey(localNodes, pubkey); node != nil {
+			c.loggerLocal.Debug("gossip peer found by pubkey", "pubkey", pubkey, "node_count", len(localNodes))
 			return node, nil
 		}
+		c.loggerLocal.Debug("gossip peer not found by pubkey", "pubkey", pubkey, "node_count", len(localNodes))
+	} else {
+		c.loggerLocal.Debug("failed to query gossip peer by pubkey", "pubkey", pubkey, "err", localErr)
 	}
 
-	return nil, fmt.Errorf("gossip node not found for pubkey: %s", pubkey)
+	clusterNodes, clusterErr := c.networkRPCClient.GetClusterNodes(context.Background())
+	if clusterErr == nil {
+		if node := findGossipNodeFromPubkey(clusterNodes, pubkey); node != nil {
+			c.loggerNetwork.Debug("gossip peer found by pubkey", "pubkey", pubkey, "node_count", len(clusterNodes))
+			return node, nil
+		}
+		c.loggerNetwork.Debug("gossip peer not found by pubkey", "pubkey", pubkey, "node_count", len(clusterNodes))
+	} else {
+		c.loggerNetwork.Debug("failed to query gossip peer by pubkey", "pubkey", pubkey, "err", clusterErr)
+	}
+
+	return nil, gossipNodeFromPubkeyError(pubkey, len(localNodes), localErr, len(clusterNodes), clusterErr)
+}
+
+func findGossipNodeFromPubkey(nodes []*rpc.GetClusterNodesResult, pubkey string) *rpc.GetClusterNodesResult {
+	for _, node := range nodes {
+		if node != nil && node.Pubkey.String() == pubkey {
+			return node
+		}
+	}
+	return nil
+}
+
+func gossipNodeFromPubkeyError(pubkey string, localCount int, localErr error, clusterCount int, clusterErr error) error {
+	localResult := fmt.Sprintf("returned %d nodes without a match", localCount)
+	if localErr != nil {
+		localResult = fmt.Sprintf("failed: %v", localErr)
+	}
+	clusterResult := fmt.Sprintf("returned %d nodes without a match", clusterCount)
+	if clusterErr != nil {
+		clusterResult = fmt.Sprintf("failed: %v", clusterErr)
+	}
+	return fmt.Errorf(
+		"gossip node not found for pubkey: %s (local RPC %s; cluster RPC %s)",
+		pubkey,
+		localResult,
+		clusterResult,
+	)
 }
 
 // NodeFromIPWithExpectedPubkey returns a Node from an IP address, preferring the entry

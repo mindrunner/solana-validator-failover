@@ -115,7 +115,7 @@ Download and install the latest [release](https://github.com/SOL-Strategies/sola
 
 2. **Some focus and appreciation of what you're doing** — these can be high pucker factor operations regardless of tooling.
 
-3. **Local validator started with `--full-rpc-api`** — this tool calls `getClusterNodes` on the local RPC, which requires the validator to be started with the `--full-rpc-api` flag (Agave/Firedancer).
+3. **Local validator started with `--full-rpc-api`** — this tool calls `getClusterNodes` on the local RPC, which requires the validator to be started with the `--full-rpc-api` flag (Agave/Firedancer). For resilient peer discovery, configure a private cluster RPC that also supports `getClusterNodes`; it is used when the local validator's gossip view does not contain the peer.
 
 ## Configuration
 
@@ -131,9 +131,10 @@ validator:
   #            any other value is treated as a custom cluster (requires cluster_rpc_url)
   cluster: mainnet-beta
 
-  # (required for custom clusters) RPC URL for the cluster - must support getClusterNodes.
-  # For well-known clusters the built-in URL is used. For custom clusters, or if you need
-  # to override the default (e.g. to use a private RPC), set this explicitly.
+  # (required for custom clusters) RPC URL for the cluster.
+  # For well-known clusters the built-in URL is used unless this is set. A private endpoint
+  # that supports getClusterNodes is recommended: peer discovery falls back to it when the
+  # local validator's gossip view does not contain the expected peer.
   # cluster_rpc_url: <solana_compatible_rpc_endpoint>
 
   # optional display name used in failover plans, logs, and hook templates
@@ -425,6 +426,24 @@ Post-hooks always run even if the set-identity command fails. Pre hooks are inte
 ### Rollback is shown in the failover plan
 
 When `rollback.enabled: true`, the pre-failover plan shows the rollback commands that would run on each node if the failover fails, giving operators visibility before they confirm.
+
+## Troubleshooting gossip peer discovery
+
+`svf` determines this node's role from the local validator RPC. When looking for the active peer by pubkey, it checks the local RPC first and then `validator.cluster_rpc_url`. This matters because `getClusterNodes` represents the responding validator's own in-memory gossip/CRDS view; it can differ from the independent view collected by `solana gossip`, especially in mixed-client Agave/Firedancer deployments.
+
+To inspect exactly what the local RPC reports:
+
+```shell
+PK=<active_identity_pubkey>
+RPC=http://127.0.0.1:8899
+
+curl -sS "$RPC" \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getClusterNodes"}' |
+  jq --arg pk "$PK" '{error, count:(.result | length), match:[.result[] | select(.pubkey == $pk)]}'
+```
+
+If `match` is empty locally while `solana gossip` shows the peer, configure a trusted private `cluster_rpc_url` that exposes `getClusterNodes`. `svf` still fails closed if neither RPC view contains the expected active pubkey.
 
 ## Developing
 
