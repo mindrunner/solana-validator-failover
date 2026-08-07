@@ -7,21 +7,46 @@ import (
 	"github.com/charmbracelet/log"
 )
 
+var logFormatters = map[string]log.Formatter{
+	"text":   log.TextFormatter,
+	"json":   log.JSONFormatter,
+	"logfmt": log.LogfmtFormatter,
+}
+
 // New returns a logger with the given component as its prefix.
 func New(component string) *log.Logger {
 	return log.WithPrefix(component)
 }
 
-// Configure sets the global log level, time format and colour styles.
-// Call once at startup before any log output is produced.
-func Configure(level string) {
-	parsedLevel, err := log.ParseLevel(level)
+// Configure sets the global logger from config, with an optional CLI level override.
+// An invalid CLI override is reported and the validated config level is retained.
+func Configure(configLevel, format, cliLevel string) {
+	parsedLevel, err := log.ParseLevel(configLevel)
 	if err != nil {
-		log.Error("invalid log level, defaulting to info", "level", level, "err", err)
+		log.Error("invalid config log level, defaulting to info", "level", configLevel, "err", err)
 		parsedLevel = log.InfoLevel
 	}
 
+	if cliLevel != "" {
+		cliParsedLevel, cliErr := log.ParseLevel(cliLevel)
+		if cliErr != nil {
+			// Ensure this error is visible even if a previous logger configuration used
+			// a level higher than error. The config level is applied immediately below.
+			log.SetLevel(log.InfoLevel)
+			log.Error("invalid CLI log level, using configured level", "invalid_level", cliLevel, "configured_level", configLevel, "err", cliErr)
+		} else {
+			parsedLevel = cliParsedLevel
+		}
+	}
+
+	formatter, ok := logFormatters[format]
+	if !ok {
+		log.Error("invalid config log format, defaulting to text", "format", format)
+		formatter = log.TextFormatter
+	}
+
 	log.SetLevel(parsedLevel)
+	log.SetFormatter(formatter)
 	log.SetTimeFunction(func(t time.Time) time.Time { return t.UTC() })
 	log.SetTimeFormat("2006-01-02T15:04:05.000Z07:00")
 

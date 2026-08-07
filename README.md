@@ -68,7 +68,7 @@ By default, `run` executes in **dry-run mode**: the tower file is synced and all
 | Flag                      | Default                                                      | Description                                   |
 | ------------------------- | ------------------------------------------------------------ | --------------------------------------------- |
 | `-c, --config <path>`     | `~/solana-validator-failover/solana-validator-failover.yaml` | Path to config file.                          |
-| `-l, --log-level <level>` | `info`                                                       | Log level (`debug`, `info`, `warn`, `error`). |
+| `-l, --log-level <level>` | —                                                            | Override `log.level` (`debug`, `info`, `warn`, `error`, `fatal`). |
 | `-n, --no-update-check`   | `false`                                                      | Skip the startup update check. Overrides `update.check_on_startup` in the config file. |
 
 ### Peer selection
@@ -121,6 +121,15 @@ Download and install the latest [release](https://github.com/SOL-Strategies/sola
 
 ```yaml
 # default --config=~/solana-validator-failover/solana-validator-failover.yaml
+log:
+  # minimum log level; overridden by --log-level when explicitly supplied
+  # default: info; one of: debug, info, warn, error, fatal
+  level: info
+
+  # log output format
+  # default: text; one of: text, logfmt, json
+  format: text
+
 validator:
   # path of validator program to use when issuing set-identity commands
   # default: agave-validator

@@ -61,6 +61,7 @@ type UpdateConfig struct {
 
 // SolanaValidatorFailover is the configuration for the program
 type SolanaValidatorFailover struct {
+	Log       LogConfig        `mapstructure:"log"`
 	Validator validator.Config `mapstructure:"validator"`
 	Update    UpdateConfig     `mapstructure:"update"`
 }
@@ -96,6 +97,8 @@ func (s *SolanaValidatorFailover) LoadFromConfigFile(configPath string) (err err
 	v.SetConfigFile(loadConfigPath)
 
 	// Set defaults
+	v.SetDefault("log.level", DefaultLogLevel)
+	v.SetDefault("log.format", DefaultLogFormat)
 	v.SetDefault("validator.bin", DefaultBin)
 	v.SetDefault("validator.average_slot_duration", DefaultAverageSlotDuration)
 	v.SetDefault("validator.cluster", DefaultCluster)
@@ -118,5 +121,9 @@ func (s *SolanaValidatorFailover) LoadFromConfigFile(configPath string) (err err
 	}
 
 	// Unmarshal into the full config structure
-	return v.Unmarshal(&s)
+	if err := v.Unmarshal(s); err != nil {
+		return err
+	}
+
+	return s.Log.Validate()
 }

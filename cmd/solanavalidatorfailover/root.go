@@ -19,6 +19,7 @@ var (
 	logLevel      string
 	noUpdateCheck bool
 	updateCh      chan string
+	loadedConfig  *config.SolanaValidatorFailover
 	rootCmd       = &cobra.Command{
 		Aliases: []string{},
 		Use:     style.RenderPurpleString(constants.AppName),
@@ -47,7 +48,7 @@ func Execute() {
 	// config flag
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", config.DefaultConfigPath, "path to config file")
 	// log level flag
-	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "l", "info", "log level")
+	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "l", "", "log level (debug, info, warn, error, fatal) - overrides config log.level")
 	// update check flag
 	rootCmd.PersistentFlags().BoolVarP(&noUpdateCheck, "no-update-check", "n", false, "skip update check")
 
@@ -66,14 +67,18 @@ func init() {
 }
 
 func persistentPreRun(cmd *cobra.Command, args []string) error {
-	logging.Configure(logLevel)
+	cfg, err := config.NewFromFile(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	loadedConfig = cfg
+
+	logging.Configure(cfg.Log.Level, cfg.Log.Format, logLevel)
 
 	// --no-update-check flag always wins; otherwise defer to config (default: true).
 	checkUpdate := !noUpdateCheck
 	if checkUpdate {
-		if cfg, err := config.NewFromFile(configPath); err == nil {
-			checkUpdate = cfg.Update.CheckOnStartup
-		}
+		checkUpdate = cfg.Update.CheckOnStartup
 	}
 
 	if checkUpdate {
