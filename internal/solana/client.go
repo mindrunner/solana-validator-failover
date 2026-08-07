@@ -156,21 +156,38 @@ func wrapLocalGetClusterNodesErr(err error) error {
 }
 
 func (c *Client) nodeFromIP(ip string) (node *rpc.GetClusterNodesResult, err error) {
-	nodes, err := c.getClusterNodes()
-	if err != nil {
-		return nil, err
+	localNodes, localErr := c.getClusterNodes()
+	if localErr == nil {
+		if node := findGossipNodeFromIP(localNodes, ip); node != nil {
+			c.loggerLocal.Debug("gossip peer found by ip", "ip", ip, "node_count", len(localNodes))
+			return node, nil
+		}
+		c.loggerLocal.Debug("gossip peer not found by ip", "ip", ip, "node_count", len(localNodes))
+	} else {
+		c.loggerLocal.Debug("failed to query gossip peer by ip", "ip", ip, "err", localErr)
 	}
 
+	clusterNodes, clusterErr := c.networkRPCClient.GetClusterNodes(context.Background())
+	if clusterErr == nil {
+		if node := findGossipNodeFromIP(clusterNodes, ip); node != nil {
+			c.loggerNetwork.Debug("gossip peer found by ip", "ip", ip, "node_count", len(clusterNodes))
+			return node, nil
+		}
+		c.loggerNetwork.Debug("gossip peer not found by ip", "ip", ip, "node_count", len(clusterNodes))
+	} else {
+		c.loggerNetwork.Debug("failed to query gossip peer by ip", "ip", ip, "err", clusterErr)
+	}
+
+	return nil, gossipNodeFromIPError(ip, len(localNodes), localErr, len(clusterNodes), clusterErr)
+}
+
+func findGossipNodeFromIP(nodes []*rpc.GetClusterNodesResult, ip string) *rpc.GetClusterNodesResult {
 	for _, node := range nodes {
-		if node.Gossip != nil {
-			gossipIP := strings.Split(*node.Gossip, ":")[0]
-			if gossipIP == ip {
-				return node, nil
-			}
+		if node != nil && node.Gossip != nil && strings.Split(*node.Gossip, ":")[0] == ip {
+			return node
 		}
 	}
-
-	return nil, fmt.Errorf("gossip node not found for ip: %s", ip)
+	return nil
 }
 
 func (c *Client) gossipNodeFromPubkey(pubkey string) (node *rpc.GetClusterNodesResult, err error) {
@@ -225,6 +242,23 @@ func gossipNodeFromPubkeyError(pubkey string, localCount int, localErr error, cl
 	)
 }
 
+func gossipNodeFromIPError(ip string, localCount int, localErr error, clusterCount int, clusterErr error) error {
+	localResult := fmt.Sprintf("returned %d nodes without a match", localCount)
+	if localErr != nil {
+		localResult = fmt.Sprintf("failed: %v", localErr)
+	}
+	clusterResult := fmt.Sprintf("returned %d nodes without a match", clusterCount)
+	if clusterErr != nil {
+		clusterResult = fmt.Sprintf("failed: %v", clusterErr)
+	}
+	return fmt.Errorf(
+		"gossip node not found for ip: %s (local RPC %s; cluster RPC %s)",
+		ip,
+		localResult,
+		clusterResult,
+	)
+}
+
 // NodeFromIPWithExpectedPubkey returns a Node from an IP address, preferring the entry
 // whose pubkey matches expectedPubkey. During a gossip identity transition, both the old
 // and new CRDS entries for a node briefly coexist; this method returns the expected entry
@@ -239,14 +273,49 @@ func (c *Client) NodeFromIPWithExpectedPubkey(ip, expectedPubkey string) (*Node,
 }
 
 func (c *Client) nodeFromIPWithExpectedPubkey(ip, expectedPubkey string) (*rpc.GetClusterNodesResult, error) {
-	nodes, err := c.getClusterNodes()
-	if err != nil {
-		return nil, err
+	localNodes, localErr := c.getClusterNodes()
+	var localFirstMatch *rpc.GetClusterNodesResult
+	if localErr == nil {
+		localExactMatch, firstMatch := findGossipNodeFromIPWithExpectedPubkey(localNodes, ip, expectedPubkey)
+		if localExactMatch != nil {
+			c.loggerLocal.Debug("gossip peer found by ip and expected pubkey", "ip", ip, "pubkey", expectedPubkey, "node_count", len(localNodes))
+			return localExactMatch, nil
+		}
+		localFirstMatch = firstMatch
+		c.loggerLocal.Debug("gossip peer not found by ip and expected pubkey", "ip", ip, "pubkey", expectedPubkey, "node_count", len(localNodes), "ip_match", firstMatch != nil)
+	} else {
+		c.loggerLocal.Debug("failed to query gossip peer by ip and expected pubkey", "ip", ip, "pubkey", expectedPubkey, "err", localErr)
 	}
 
-	var firstMatch *rpc.GetClusterNodesResult
+	clusterNodes, clusterErr := c.networkRPCClient.GetClusterNodes(context.Background())
+	var clusterFirstMatch *rpc.GetClusterNodesResult
+	if clusterErr == nil {
+		clusterExactMatch, firstMatch := findGossipNodeFromIPWithExpectedPubkey(clusterNodes, ip, expectedPubkey)
+		if clusterExactMatch != nil {
+			c.loggerNetwork.Debug("gossip peer found by ip and expected pubkey", "ip", ip, "pubkey", expectedPubkey, "node_count", len(clusterNodes))
+			return clusterExactMatch, nil
+		}
+		clusterFirstMatch = firstMatch
+		c.loggerNetwork.Debug("gossip peer not found by ip and expected pubkey", "ip", ip, "pubkey", expectedPubkey, "node_count", len(clusterNodes), "ip_match", firstMatch != nil)
+	} else {
+		c.loggerNetwork.Debug("failed to query gossip peer by ip and expected pubkey", "ip", ip, "pubkey", expectedPubkey, "err", clusterErr)
+	}
+
+	if localFirstMatch != nil {
+		c.loggerLocal.Debug("using stale gossip peer found by ip", "ip", ip, "expected_pubkey", expectedPubkey, "actual_pubkey", localFirstMatch.Pubkey.String())
+		return localFirstMatch, nil
+	}
+	if clusterFirstMatch != nil {
+		c.loggerNetwork.Debug("using stale gossip peer found by ip", "ip", ip, "expected_pubkey", expectedPubkey, "actual_pubkey", clusterFirstMatch.Pubkey.String())
+		return clusterFirstMatch, nil
+	}
+
+	return nil, gossipNodeFromIPError(ip, len(localNodes), localErr, len(clusterNodes), clusterErr)
+}
+
+func findGossipNodeFromIPWithExpectedPubkey(nodes []*rpc.GetClusterNodesResult, ip, expectedPubkey string) (exactMatch, firstMatch *rpc.GetClusterNodesResult) {
 	for _, node := range nodes {
-		if node.Gossip == nil {
+		if node == nil || node.Gossip == nil {
 			continue
 		}
 		gossipIP := strings.Split(*node.Gossip, ":")[0]
@@ -255,17 +324,13 @@ func (c *Client) nodeFromIPWithExpectedPubkey(ip, expectedPubkey string) (*rpc.G
 		}
 		// Found a node at this IP — prefer the one with the expected pubkey
 		if node.Pubkey.String() == expectedPubkey {
-			return node, nil
+			return node, firstMatch
 		}
 		if firstMatch == nil {
 			firstMatch = node // stale entry — keep as fallback
 		}
 	}
-
-	if firstMatch != nil {
-		return firstMatch, nil
-	}
-	return nil, fmt.Errorf("gossip node not found for ip: %s", ip)
+	return nil, firstMatch
 }
 
 // GetCreditRankedVoteAccountFromPubkey returns the credit rank-sorted current vote accounts rank is the difference
